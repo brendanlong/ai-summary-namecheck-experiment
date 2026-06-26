@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- project-specific ---
+# Don't republish Gwern's content (even anonymized) or run outputs.
+# Regenerate locally with fetch.sh + sanitize.py.
+corpus/
+results/
