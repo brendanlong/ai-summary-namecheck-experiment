@@ -44,3 +44,34 @@ attribution. Candidates (in increasing leadingness):
 
 The clean comparison remains: does it guess Gwern from `clean-b` (prose only)
 but *not* identify Brendan from his — style recognition, not name-reading.
+
+## Run 2 — added guardian-angel, neutral summary, n=5
+
+Added `gwern__guardian-angel` (name in source 50×; content is a personalized-LLM
+proposal using Gwern as the worked example). Still **0%** name-check in every
+level including `raw`. Even raw guardian-angel summaries say "the author" / "a
+specific user".
+
+## Run 3 — EXACT Lion Reader production prompt, n=5
+
+Replicated the real condition: verbatim Lion Reader RSS prompt (prompt v3),
+`{{title}}` injected, `claude-sonnet-4-6`, max_tokens 1024, maxWords 150,
+thinking off, 50k-char truncation.
+
+| author | raw | a | b |
+|--------|-----|---|---|
+| gwern (6 posts) | 0/30 | 0/30 | 0/30 |
+| brendanlong (2) | 0/10 | 0/10 | 0/10 |
+
+**Still 0/120. 0 outputs contain the string "gwern".**
+
+### Conclusion so far
+
+The observed name-check is **not reproducible from the article text** under the
+production setup — not even with the name present 50× and the exact prompt. The
+untested variable is the **actual RSS feed input**: Lion Reader summarizes
+`entry.content` (feed HTML → plain text), which commonly includes a byline
+("by Gwern Branwen"), a source/site line, or a trailing canonical gwern.net URL.
+Any of those hands the model the name directly — a feed-metadata artifact, not a
+style or content inference. Open alternatives: rare event (n too low), or a
+different model / custom prompt at observation time.

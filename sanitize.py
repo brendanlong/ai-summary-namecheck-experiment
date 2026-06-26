@@ -66,6 +66,17 @@ def strip_front_matter(text: str) -> str:
     return text
 
 
+def extract_title(text: str, fallback: str) -> str:
+    """Pull `title:` from YAML front matter (for the Lion Reader prompt's
+    {{title}} slot). Falls back to the slug if absent."""
+    import html as _html
+    m = re.search(r'(?m)^title:\s*"?(.+?)"?\s*$', text[:2000])
+    if not m:
+        return fallback
+    t = re.sub(r"<[^>]+>", "", m.group(1).strip())
+    return _html.unescape(t)
+
+
 def _drop_bracket_spans(text: str, prefix: str) -> str:
     """Remove spans that start with `prefix` (ending in '[') through the
     matching ']', counting nesting. Linear time, no regex backtracking."""
@@ -199,8 +210,9 @@ def main():
         (OUT_A / f"{slug}.txt").write_text(a, encoding="utf-8")
         (OUT_B / f"{slug}.txt").write_text(b, encoding="utf-8")
 
+        title = extract_title(raw, slug)
         manifest.append({
-            "slug": slug, "author": author,
+            "slug": slug, "author": author, "title": title,
             "words_raw": len(rawlvl.split()),
             "words_a": len(a.split()),
             "words_b": len(b.split()),
