@@ -75,3 +75,39 @@ untested variable is the **actual RSS feed input**: Lion Reader summarizes
 Any of those hands the model the name directly — a feed-metadata artifact, not a
 style or content inference. Open alternatives: rare event (n too low), or a
 different model / custom prompt at observation time.
+
+## Run 4 — faithful production input from the user's actual Lion Reader account
+
+Pulled the real entries via the Lion Reader MCP. Two guardian-angel entries:
+
+- **LessWrong copy** (the one actually *read*): `author: "gwern"` field, but the
+  summarized input is the **RSS abstract only** — title has no "gwern", content
+  has no "gwern". The `author` field is **not** passed to the prompt. → can't
+  produce a name-check.
+- **Saved gwern.net copy**: title is `"… · Gwern.net"` (site name in the
+  `{{title}}` slot), `contentCleaned` has 127 "gwern" hits (mostly in the
+  backlinks/bibliography that get truncated; only ~3 in the first 50k chars
+  actually summarized).
+
+Faithful replay of the **saved gwern.net entry** (real title incl. `· Gwern.net`,
+real cleaned content → plain text, exact Lion prompt, sonnet-4-6, 50k truncation):
+
+| condition | named Gwern |
+|-----------|-------------|
+| thinking off, n=10 | 0/10 |
+| thinking off, n=15 | 0/15 |
+| thinking on (adaptive), n=15 | 0/15 |
+
+**~170 total calls across all runs → 0 name-checks.**
+
+## Overall conclusion
+
+Under faithful production conditions — and many nearby ones — `claude-sonnet-4-6`
+does **not** name-check the author when summarizing, even with the name present
+in the title and body. The article's **style and content do not drive it.**
+
+The originally-observed name-check must come from a variable not in the article:
+a **custom summarization prompt** or **non-default model** in the user's Lion
+Reader settings, a **rare/one-off** generation, or a different observation
+context. Needs the user's actual prompt/model config or the verbatim summary
+text they saw to close out.
