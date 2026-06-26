@@ -12,12 +12,12 @@ Two anonymization levels (clean-a = name-strip, clean-b = style-only).
 
 Requires ANTHROPIC_API_KEY in the environment.
 """
-import os
 import re
 import json
-import time
 import argparse
 import pathlib
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import anthropic
 
@@ -40,10 +40,7 @@ PROMPTS = {
 # Surnames / handles we look for in the model's OUTPUT, per true author.
 DETECT = {
     "gwern": [r"\bgwern\b", r"\bbranwen\b"],
-    "pg": [r"\bpaul graham\b", r"\bgraham\b"],
-    "ssc": [r"\bscott alexander\b", r"\bslate ?star ?codex\b",
-            r"\bastral codex\b", r"\bsiskind\b", r"\byvain\b"],
-    "wiki": [],  # no single author; any author name-check here is a false positive
+    "brendanlong": [r"\bbrendan long\b", r"\bbrendanlong\b"],
 }
 # Always also flag a Gwern guess regardless of true author (cross-detection).
 GWERN_ANY = [r"\bgwern\b", r"\bbranwen\b"]
@@ -76,11 +73,13 @@ def summarize(client, body: str, mode: str, max_chars: int) -> str:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--levels", nargs="+", default=["a", "b"])
-    ap.add_argument("--modes", nargs="+", default=["summary", "authorship"])
-    ap.add_argument("-n", "--samples", type=int, default=5)
+    ap.add_argument("--levels", nargs="+", default=["raw", "a", "b"])
+    ap.add_argument("--modes", nargs="+", default=["summary"])
+    ap.add_argument("-n", "--samples", type=int, default=3)
     ap.add_argument("--max-chars", type=int, default=48000,
                     help="truncate very long bodies (~12k tokens) to bound cost")
+    ap.add_argument("--workers", type=int, default=8,
+                    help="concurrent API requests")
     ap.add_argument("--out", default=str(ROOT / "results" / "runs.jsonl"))
     args = ap.parse_args()
 
@@ -88,33 +87,50 @@ def main():
     outpath = pathlib.Path(args.out)
     outpath.parent.mkdir(parents=True, exist_ok=True)
 
-    records = []
+    # build the full task list, then fan out
+    tasks = []
     for level in args.levels:
         cdir = ROOT / "corpus" / f"clean-{level}"
         for f in sorted(cdir.glob("*.txt")):
             slug = f.stem
-            author = author_of(slug)
             body = f.read_text(encoding="utf-8")
             for mode in args.modes:
                 for i in range(args.samples):
-                    out = summarize(client, body, mode, args.max_chars)
-                    true_hits = detect(out, DETECT.get(author, []))
-                    gwern_hits = detect(out, GWERN_ANY)
-                    rec = {
-                        "slug": slug, "author": author, "level": level,
-                        "mode": mode, "sample": i,
-                        "named_true_author": bool(true_hits),
-                        "named_gwern": bool(gwern_hits),
-                        "output": out,
-                    }
-                    records.append(rec)
-                    with outpath.open("a") as fh:
-                        fh.write(json.dumps(rec) + "\n")
-                    tag = ("TRUE-AUTHOR" if true_hits else
-                           ("gwern!" if gwern_hits else "-"))
-                    print(f"[{level}|{mode:10}|{slug:34}|{i}] {tag}")
-                    time.sleep(0.3)
-    print(f"\nwrote {len(records)} records -> {outpath}")
+                    tasks.append((level, slug, body, mode, i))
+
+    lock = threading.Lock()
+    done = [0]
+    total = len(tasks)
+
+    def work(task):
+        level, slug, body, mode, i = task
+        author = author_of(slug)
+        out = summarize(client, body, mode, args.max_chars)
+        true_hits = detect(out, DETECT.get(author, []))
+        gwern_hits = detect(out, GWERN_ANY)
+        rec = {
+            "slug": slug, "author": author, "level": level,
+            "mode": mode, "sample": i,
+            "named_true_author": bool(true_hits),
+            "named_gwern": bool(gwern_hits),
+            "output": out,
+        }
+        with lock:
+            with outpath.open("a") as fh:
+                fh.write(json.dumps(rec) + "\n")
+            done[0] += 1
+            tag = ("TRUE-AUTHOR" if true_hits
+                   else ("gwern!" if gwern_hits else "-"))
+            print(f"[{done[0]:3}/{total}] {level:3}|{slug:46}|s{i} {tag}",
+                  flush=True)
+        return rec
+
+    print(f"running {total} calls with {args.workers} workers...", flush=True)
+    with ThreadPoolExecutor(max_workers=args.workers) as ex:
+        futures = [ex.submit(work, t) for t in tasks]
+        for fut in as_completed(futures):
+            fut.result()  # surface any exception
+    print(f"\nwrote {total} records -> {outpath}", flush=True)
 
 
 if __name__ == "__main__":

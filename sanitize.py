@@ -25,8 +25,10 @@ import pathlib
 
 ROOT = pathlib.Path(__file__).parent
 RAW = ROOT / "corpus" / "raw"
-OUT_A = ROOT / "corpus" / "clean-a"
-OUT_B = ROOT / "corpus" / "clean-b"
+# Three nested levels. raw->a removes only the name; a->b removes markup.
+OUT_RAW = ROOT / "corpus" / "clean-raw"   # name IN, markup IN (front matter stripped)
+OUT_A = ROOT / "corpus" / "clean-a"       # name OUT, markup IN
+OUT_B = ROOT / "corpus" / "clean-b"       # name OUT, markup OUT (plain prose)
 
 # author prefix -> the identifier strings that must be scrubbed (whole-word,
 # case-insensitive) plus any domains/emails. Surnames + handles + sites.
@@ -41,13 +43,11 @@ IDENTIFIERS = {
         "domains": ["paulgraham.com"],
         "emails": [],
     },
-    "ssc": {
-        "names": [r"scott alexander", r"slate star codex", r"astral codex ten",
-                  r"scott siskind", r"yvain"],
-        "domains": ["slatestarcodex.com", "astralcodexten.com"],
-        "emails": [],
+    "brendanlong": {
+        "names": [r"brendan long", r"brendanlong"],
+        "domains": ["brendanlong.com"],
+        "emails": [r"\S+@brendanlong\.com"],
     },
-    "wiki": {"names": [], "domains": ["wikipedia.org"], "emails": []},
 }
 
 PLACEHOLDER = "the author"
@@ -110,12 +110,8 @@ def markdown_to_prose(text: str) -> str:
     #    using a bracket-counting scan that handles arbitrary nesting.
     text = _drop_bracket_spans(text, "^[")
     text = _drop_bracket_spans(text, "![")
-    # 3. Unwrap remaining link text `[text]` -> `text` (a few passes for nesting)
-    for _ in range(4):
-        text, n = re.subn(r"\[([^\[\]]*)\]", r"\1", text)
-        if not n:
-            break
-    # footnote definitions: lines starting [^id]:  (drop the line + continuations)
+    # 3. Footnotes BEFORE unwrapping links, or `[^1]` would unwrap to `^1`.
+    #    Drop definition blocks (lines starting `[^id]:` + indented continuation)
     out_lines = []
     skip_cont = False
     for ln in text.split("\n"):
@@ -128,8 +124,12 @@ def markdown_to_prose(text: str) -> str:
             skip_cont = False
         out_lines.append(ln)
     text = "\n".join(out_lines)
-    # inline footnote refs [^id] -> remove
-    text = re.sub(r"\[\^[^\]]+\]", "", text)
+    text = re.sub(r"\[\^[^\]]+\]", "", text)        # inline footnote refs [^id]
+    # 4. Unwrap remaining link text `[text]` -> `text` (a few passes for nesting)
+    for _ in range(4):
+        text, n = re.subn(r"\[([^\[\]]*)\]", r"\1", text)
+        if not n:
+            break
     # heading / blockquote / list markers -> plain
     text = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", text)
     text = re.sub(r"(?m)^\s*>\s?", "", text)
@@ -168,9 +168,16 @@ def count_residual(text: str, author: str) -> int:
     return n
 
 
+def normalize(text: str) -> str:
+    import html as _html
+    text = _html.unescape(text)        # &nbsp; &amp; etc.
+    text = text.replace("\xa0", " ").replace("​", "")
+    return text
+
+
 def main():
-    OUT_A.mkdir(parents=True, exist_ok=True)
-    OUT_B.mkdir(parents=True, exist_ok=True)
+    for d in (OUT_RAW, OUT_A, OUT_B):
+        d.mkdir(parents=True, exist_ok=True)
     manifest = []
     for src in sorted(RAW.glob("*")):
         if src.suffix not in (".md", ".txt"):
@@ -178,33 +185,39 @@ def main():
         author = author_of(src)
         slug = src.stem
         raw = src.read_text(encoding="utf-8", errors="replace")
-        body = strip_front_matter(raw)
+        body = normalize(strip_front_matter(raw))
 
-        # level A: keep structure, scrub identifiers only
+        # raw : name + markup left in (front matter only removed)
+        rawlvl = body
+        # level A: markup left in, identifiers scrubbed
         a = scrub_identifiers(body, author)
-        # level B: flatten to prose first (for .md), then scrub
+        # level B: flatten markdown to prose (for .md), then scrub
         b_src = markdown_to_prose(body) if src.suffix == ".md" else body
         b = scrub_identifiers(b_src, author)
 
+        (OUT_RAW / f"{slug}.txt").write_text(rawlvl, encoding="utf-8")
         (OUT_A / f"{slug}.txt").write_text(a, encoding="utf-8")
         (OUT_B / f"{slug}.txt").write_text(b, encoding="utf-8")
 
         manifest.append({
-            "slug": slug,
-            "author": author,
+            "slug": slug, "author": author,
+            "words_raw": len(rawlvl.split()),
             "words_a": len(a.split()),
             "words_b": len(b.split()),
-            "residual_a": count_residual(a, author),
-            "residual_b": count_residual(b, author),
+            "name_in_raw": count_residual(rawlvl, author),  # how often name appears
+            "residual_a": count_residual(a, author),         # must be 0
+            "residual_b": count_residual(b, author),         # must be 0
         })
 
     (ROOT / "corpus" / "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")
-    print(f"{'slug':40} {'author':6} {'wA':>6} {'wB':>6} {'resA':>4} {'resB':>4}")
+    print(f"{'slug':42} {'author':11} {'wRaw':>6} {'wA':>6} {'wB':>6} "
+          f"{'nameInRaw':>9} {'resA':>4} {'resB':>4}")
     for m in manifest:
         flag = "  <-- LEAK" if m["residual_a"] or m["residual_b"] else ""
-        print(f"{m['slug']:40} {m['author']:6} {m['words_a']:6} "
-              f"{m['words_b']:6} {m['residual_a']:4} {m['residual_b']:4}{flag}")
+        print(f"{m['slug']:42} {m['author']:11} {m['words_raw']:6} "
+              f"{m['words_a']:6} {m['words_b']:6} {m['name_in_raw']:9} "
+              f"{m['residual_a']:4} {m['residual_b']:4}{flag}")
 
 
 if __name__ == "__main__":

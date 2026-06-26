@@ -31,15 +31,17 @@ def main():
 
     # headline: per author x level x mode, rate the true author was named
     print("\n=== summary: P(named true author) ===")
+    print("  raw=name+markup in | a=name out, markup in | b=name out, prose only")
+    order = {"raw": 0, "a": 1, "b": 2}
     hi = defaultdict(lambda: {"n": 0, "true": 0})
     for r in rows:
-        k = (r["author"], r["level"], r["mode"])
+        k = (r["author"], r["mode"], r["level"])
         hi[k]["n"] += 1
         hi[k]["true"] += int(r["named_true_author"])
-    for k in sorted(hi):
+    for k in sorted(hi, key=lambda k: (k[0], k[1], order.get(k[2], 9))):
         a = hi[k]
         rate = a["true"] / a["n"] if a["n"] else 0
-        print(f"  {k[0]:6} level-{k[1]} {k[2]:10} "
+        print(f"  {k[0]:12} {k[1]:8} level-{k[2]:3} "
               f"{a['true']:3}/{a['n']:<3} = {rate:5.0%}")
 
 
